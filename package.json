@@ -1,0 +1,14 @@
+{
+  "name": "solana-supply-api",
+  "version": "1.0.0",
+  "main": "api/supply.js",
+  "engines": {
+    "node": "20.x"
+  },
+  "dependencies": {
+    "@solana/web3.js": "^1.98.0"
+  },
+  "scripts": {
+    "start": "node api/supply.js"
+  }
+}
