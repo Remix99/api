@@ -1,48 +1,56 @@
 const { Connection, PublicKey } = require('@solana/web3.js');
 
-const MINT_ADDRESS = new PublicKey("6QhZ6WQyYjLGDXFuc9CP1MzzvfeA6rDVnPYUke6ybuff");
-const EXCLUDED_WALLETS = [
-  "4wkdNpaQuiyfMmq6J94egidAN9sWwzGRfWk45KZt4uZN",
-  "9ZNSQ3TBsXPHUMvTEpobPG2ZDoKY7nq9k3SBGPVSfb6M",
-  "6TBMvAbc7MnyRP7Li4VL6L8rd8CUbRWNwoKTsqnzz1Jv",
-  "1nc1nerator11111111111111111111111111111111"
-];
-const RPC_URL = "https://api.mainnet-beta.solana.com";
-
 module.exports = async (req, res) => {
+  // 1. Pull settings from Environment Variables
+  const MINT_ADDR = process.env.MINT_ADDRESS;
+  const RPC_URL = process.env.RPC_URL || "https://api.mainnet-beta.solana.com";
+  
+  // Split the comma-separated string from .env into an array
+  const EXCLUDED_WALLETS = (process.env.EXCLUDED_WALLETS || "").split(',').map(addr => addr.trim());
+
+  // Set Headers for CoinGecko
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Content-Type', 'text/plain');
+
+  if (!MINT_ADDR) {
+    return res.status(500).send("Error: MINT_ADDRESS not configured in Vercel/env.");
+  }
+
   try {
     const connection = new Connection(RPC_URL, 'confirmed');
+    const mintPublicKey = new PublicKey(MINT_ADDR);
 
-    // 2. Get Total Supply
-    const supplyInfo = await connection.getTokenSupply(MINT_ADDRESS);
-    const totalAmount = supplyInfo.value.uiAmount;
+    // 2. Fetch the on-chain Total Supply
+    const supplyRes = await connection.getTokenSupply(mintPublicKey);
+    let circulatingSupply = supplyRes.value.uiAmount;
 
-    // 3. Get Balances of Excluded Wallets
-    let excludedTotal = 0;
+    // 3. Subtract balances of all excluded wallets (including Incinerator)
+    for (const walletAddr of EXCLUDED_WALLETS) {
+      if (!walletAddr) continue;
 
-    for (const wallet of EXCLUDED_WALLETS) {
-      const owner = new PublicKey(wallet);
-      
-      // Find the specific token account for this mint held by this wallet
-      const tokenAccounts = await connection.getTokenAccountsByOwner(owner, {
-        mint: MINT_ADDRESS,
-      });
+      try {
+        const owner = new PublicKey(walletAddr);
+        
+        // Find all token accounts for your mint owned by this wallet
+        const tokenAccounts = await connection.getTokenAccountsByOwner(owner, {
+          mint: mintPublicKey,
+        });
 
-      for (const account of tokenAccounts.value) {
-        const balanceInfo = await connection.getTokenAccountBalance(account.pubkey);
-        excludedTotal += balanceInfo.value.uiAmount;
+        for (const account of tokenAccounts.value) {
+          const balanceRes = await connection.getTokenAccountBalance(account.pubkey);
+          const amount = balanceRes.value.uiAmount || 0;
+          circulatingSupply -= amount;
+        }
+      } catch (err) {
+        console.error(`Skipping wallet ${walletAddr}: Account might not exist yet.`);
       }
     }
 
-    // 4. Calculate Circulating Supply
-    const circulatingSupply = totalAmount - excludedTotal;
-
-    // 5. Response (CoinGecko prefers plain text for supply)
-    res.setHeader('Content-Type', 'text/plain');
+    // 4. Return the clean number
     return res.status(200).send(circulatingSupply.toString());
 
   } catch (error) {
-    console.error(error);
+    console.error("Global Error:", error);
     return res.status(500).send("Error calculating supply");
   }
 };
